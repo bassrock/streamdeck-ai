@@ -1,0 +1,128 @@
+<!doctype html><meta charset="utf-8"><title>PI harness</title>
+<div id="out" style="font:12px monospace;white-space:pre"></div>
+<iframe id="f" src="pi.html" style="width:340px;height:420px;border:1px solid #444"></iframe>
+<script>
+const log = [];
+const say = (s) => { log.push(s); document.getElementById('out').textContent = log.join('\n'); };
+const f = document.getElementById('f');
+f.onload = () => {
+  const w = f.contentWindow;
+  const sent = [];
+  // Stub the socket the app would provide.
+  w.WebSocket = class {
+    constructor(url) { this.url = url; this.readyState = 1; setTimeout(() => this.onopen && this.onopen(), 0); }
+    send(data) { sent.push(JSON.parse(data)); }
+    close() {}
+  };
+  w.__sent = sent;
+  const actionInfo = JSON.stringify({
+    action: 'com.danielbrooks.aiquota.quota', context: 'pi-ctx', device: 'dev',
+    payload: { settings: { sourceId: 'claude:claude-work', warnThreshold: 55, critThreshold: 90, pollSeconds: 240, customLabel: 'wk' },
+               coordinates: { column: 1, row: 0 }, controller: 'Encoder' },
+  });
+  w.connectElgatoStreamDeckSocket(28196, 'pi-ctx', 'registerPropertyInspector', '{}', actionInfo);
+
+  setTimeout(() => {
+    const d = w.document;
+    say('1) registration + initial requests');
+    say('   sent: ' + sent.map(m => m.event).join(', '));
+    say('   PASS register first: ' + (sent[0] && sent[0].event === 'registerPropertyInspector' && sent[0].uuid === 'pi-ctx'));
+    const ask = sent.find(m => m.event === 'sendToPlugin');
+    say('   PASS asks for sources: ' + (!!ask && ask.payload.event === 'getSources' && ask.action === 'com.danielbrooks.aiquota.quota'));
+
+    say('2) existing settings applied to the form');
+    say('   label=' + d.getElementById('label').value + '  warn=' + d.getElementById('warn').value +
+        '  crit=' + d.getElementById('crit').value + '  poll=' + d.getElementById('poll').value);
+    say('   PASS values round-tripped: ' + (d.getElementById('label').value === 'wk' &&
+        d.getElementById('warn').value === '55' && d.getElementById('crit').value === '90' &&
+        d.getElementById('poll').value === '240'));
+
+    say('3) plugin sends the source list');
+    w.onmessage ? null : null;
+    // Deliver the message the plugin actually emits.
+    const payload = { event: 'sources', sources: [
+      { id: 'claude:default', kind: 'claude', label: 'main', email: 'a@example.com', org: 'Personal' },
+      { id: 'claude:claude-work', kind: 'claude', label: 'work', email: 'b@example.com', org: 'BreakAway Data' },
+      { id: 'codex', kind: 'codex', label: 'codex', email: 'b@example.com', org: null },
+    ]};
+    w.__ws_onmessage({ data: JSON.stringify({ event: 'sendToPropertyInspector', context: 'pi-ctx', payload }) });
+
+    setTimeout(() => {
+      const sel = d.getElementById('source');
+      const groups = [...sel.querySelectorAll('optgroup')].map(g => g.label);
+      say('   optgroups: ' + groups.join(' | '));
+      say('   options: ' + [...sel.options].map(o => o.value).join(', '));
+      say('   selected: ' + sel.value);
+      say('   PASS grouped by provider: ' + (groups.includes('Claude Code') && groups.includes('Codex')));
+      say('   PASS keeps current selection: ' + (sel.value === 'claude:claude-work'));
+      say('   PASS org hint shown: ' + /BreakAway Data/.test(d.getElementById('sourceHint').textContent));
+
+      say('4) plugin settings are authoritative (the back-fill race)');
+      // Panel opened with an empty snapshot while back-fill was still running.
+      const w2 = w;
+      w2.__ws_onmessage({ data: JSON.stringify({ event: 'didReceiveSettings', context: 'pi-ctx',
+        payload: { settings: {} } }) });
+      const nBefore = sent.length;
+      w2.__ws_onmessage({ data: JSON.stringify({ event: 'sendToPropertyInspector', context: 'pi-ctx',
+        payload: { event: 'sources', sources: payload.sources,
+                   settings: { sourceId: 'codex', warnThreshold: 60, critThreshold: 85, pollSeconds: 180, customLabel: null, viewIndex: 0 } } }) });
+      say('   after empty snapshot + plugin settings: selected=' + d.getElementById('source').value);
+      say('   PASS adopts the plugin assignment: ' + (d.getElementById('source').value === 'codex'));
+      const forced = sent.slice(nBefore).filter(m => m.event === 'setSettings');
+      say('   PASS does not save over it: ' + (forced.length === 0));
+
+      say('4b) an unassigned dial waits instead of grabbing the first account');
+      w2.__ws_onmessage({ data: JSON.stringify({ event: 'didReceiveSettings', context: 'pi-ctx',
+        payload: { settings: {} } }) });
+      const n2 = sent.length;
+      w2.__ws_onmessage({ data: JSON.stringify({ event: 'sendToPropertyInspector', context: 'pi-ctx',
+        payload: { event: 'sources', sources: payload.sources } }) });
+      const sel2 = d.getElementById('source');
+      say('   selected=' + JSON.stringify(sel2.value) + '  first option=' + JSON.stringify(sel2.options[0].textContent));
+      say('   PASS no account force-picked: ' + (sel2.value === ''));
+      say('   PASS no settings written: ' + (sent.slice(n2).filter(m => m.event === 'setSettings').length === 0));
+
+      // Put a real source back for the remaining checks.
+      w2.__ws_onmessage({ data: JSON.stringify({ event: 'sendToPropertyInspector', context: 'pi-ctx',
+        payload: { event: 'sources', sources: payload.sources,
+                   settings: { sourceId: 'claude:claude-work', warnThreshold: 55, critThreshold: 90, pollSeconds: 240, customLabel: 'wk', viewIndex: 0 } } }) });
+
+      say('5) threshold ordering cannot invert');
+      const before = sent.length;
+      d.getElementById('warn').value = '95';
+      d.getElementById('warn').dispatchEvent(new w.Event('input', { bubbles: true }));
+      say('   warn=95 -> warn=' + d.getElementById('warn').value + ' crit=' + d.getElementById('crit').value);
+      say('   PASS crit pushed up: ' + (Number(d.getElementById('crit').value) >= 95));
+      d.getElementById('crit').value = '20';
+      d.getElementById('crit').dispatchEvent(new w.Event('input', { bubbles: true }));
+      say('   crit=20 -> warn=' + d.getElementById('warn').value + ' crit=' + d.getElementById('crit').value);
+      say('   PASS warn pulled down: ' + (Number(d.getElementById('warn').value) <= 20));
+      const saves = sent.slice(before).filter(m => m.event === 'setSettings');
+      say('   PASS saved settings: ' + (saves.length > 0));
+      const last = saves[saves.length - 1];
+      say('   last payload: ' + JSON.stringify(last && last.payload));
+      say('   PASS no token-shaped field: ' + !/token|secret|Bearer/i.test(JSON.stringify(last || {})));
+
+      say('6) poll interval is clamped');
+      d.getElementById('poll').value = '5';
+      d.getElementById('poll').dispatchEvent(new w.Event('change', { bubbles: true }));
+      say('   poll=5 -> ' + d.getElementById('poll').value);
+      say('   PASS floor enforced: ' + (Number(d.getElementById('poll').value) >= 60));
+      d.getElementById('poll').value = '99999';
+      d.getElementById('poll').dispatchEvent(new w.Event('change', { bubbles: true }));
+      say('   poll=99999 -> ' + d.getElementById('poll').value);
+      say('   PASS ceiling enforced: ' + (Number(d.getElementById('poll').value) <= 3600));
+
+      say('7) refresh button');
+      const n = sent.length;
+      d.getElementById('refresh').click();
+      const req = sent.slice(n).find(m => m.event === 'sendToPlugin' && m.payload.event === 'refresh');
+      say('   PASS sends refresh: ' + !!req);
+
+      const fails = log.filter(l => /PASS .*false/.test(l));
+      say('\nRESULT: ' + (fails.length ? 'FAIL (' + fails.length + ')' : 'PASS'));
+      document.title = fails.length ? 'FAIL' : 'PASS';
+    }, 50);
+  }, 80);
+};
+</script>

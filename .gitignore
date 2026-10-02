@@ -1,0 +1,7 @@
+# Only the repo-root node_modules is disposable. The one inside the .sdPlugin
+# folder is part of the plugin bundle and has to ship with it.
+/node_modules/
+backups/
+*.log
+.DS_Store
+logs/

@@ -1,0 +1,23 @@
+{
+  "name": "streamdeck-ai-quota",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dev scripts for the AI Quota Stream Deck plugin. The plugin itself lives in com.danielbrooks.aiquota.sdPlugin and has its own package.json.",
+  "scripts": {
+    "check": "./scripts/node.sh com.danielbrooks.aiquota.sdPlugin/bin/sources.js",
+    "status": "./scripts/dev.sh status",
+    "link": "./scripts/dev.sh link",
+    "unlink": "./scripts/dev.sh unlink",
+    "reload": "./scripts/dev.sh reload",
+    "restart": "./scripts/dev.sh restart",
+    "logs": "./scripts/dev.sh logs",
+    "test": "npm run test:failures && npm run test:shared && npm run test:agents && npm run test:pi && npm run test:e2e",
+    "test:failures": "./scripts/node.sh test/failure-paths.js",
+    "test:pi": "./test/property-inspector.sh",
+    "test:e2e": "./scripts/node.sh test/end-to-end.js \"${TMPDIR:-/tmp}/aiquota-e2e\"",
+    "preview": "./scripts/node.sh test/preview.js && open \"${TMPDIR:-/tmp}/aiquota-preview.html\"",
+    "test:shared": "./scripts/node.sh test/shared-cache.js",
+    "test:agents": "./scripts/node.sh test/agents.js",
+    "agents": "./scripts/node.sh com.danielbrooks.aiquota.sdPlugin/bin/agents.js"
+  }
+}

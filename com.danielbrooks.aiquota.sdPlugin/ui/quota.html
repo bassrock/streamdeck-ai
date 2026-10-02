@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Quota settings</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 12px 14px 18px;
+    font: 13px/1.45 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: #2d2d2d; color: #d8d8d8;
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+  .row > label { flex: 0 0 96px; text-align: right; color: #969696; font-size: 12px; }
+  .row > .field { flex: 1 1 auto; min-width: 0; }
+  select, input[type="text"], input[type="number"] {
+    width: 100%; box-sizing: border-box;
+    background: #3d3d3d; color: #e8e8e8;
+    border: 1px solid #4a4a4a; border-radius: 4px;
+    padding: 5px 7px; font: inherit; font-size: 12px;
+  }
+  select:focus, input:focus { outline: none; border-color: #0d8bff; }
+  input[type="range"] { width: 100%; accent-color: #0d8bff; }
+  .pair { display: flex; gap: 8px; align-items: center; }
+  .pair input[type="number"] { width: 62px; flex: 0 0 62px; }
+  .hint { color: #7e7e7e; font-size: 11px; margin: -5px 0 12px 106px; }
+  button {
+    background: #3d3d3d; color: #e8e8e8; border: 1px solid #4a4a4a;
+    border-radius: 4px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  button:hover { background: #484848; }
+  button:active { background: #303030; }
+  .divider { height: 1px; background: #404040; margin: 14px 0 13px; }
+  .status { color: #7e7e7e; font-size: 11px; margin-top: 10px; }
+  .status.warn { color: #fbbf24; }
+  optgroup { color: #969696; }
+</style>
+</head>
+<body>
+
+<div class="row">
+  <label for="source">Account</label>
+  <div class="field"><select id="source"><option value="">Loading…</option></select></div>
+</div>
+<div class="hint" id="sourceHint">Each dial can show a different account.</div>
+
+<div class="row">
+  <label for="label">Label</label>
+  <div class="field"><input type="text" id="label" placeholder="auto" maxlength="14"></div>
+</div>
+<div class="hint">Shown on the strip. Leave blank to use the account's own name.</div>
+
+<div class="divider"></div>
+
+<div class="row">
+  <label for="mode">Show</label>
+  <div class="field">
+    <select id="mode">
+      <option value="remaining">Remaining</option>
+      <option value="used">Used</option>
+    </select>
+  </div>
+</div>
+<div class="hint">Remaining counts down as you spend quota. The bar drains either way.</div>
+
+<div class="row">
+  <label for="warn">Amber at</label>
+  <div class="field pair">
+    <input type="number" id="warn" min="1" max="100" step="1">
+    <input type="range" id="warnRange" min="1" max="100" step="1">
+  </div>
+</div>
+
+<div class="row">
+  <label for="crit">Red at</label>
+  <div class="field pair">
+    <input type="number" id="crit" min="1" max="100" step="1">
+    <input type="range" id="critRange" min="1" max="100" step="1">
+  </div>
+</div>
+
+<div class="row">
+  <label for="poll">Refresh every</label>
+  <div class="field pair">
+    <input type="number" id="poll" min="60" max="3600" step="30">
+    <span style="color:#7e7e7e;font-size:11px">seconds</span>
+  </div>
+</div>
+<div class="hint">Minimum 60. These endpoints are free and do not consume quota, but they do rate limit.</div>
+<div class="hint" style="margin-left:106px">Thresholds are percent <em>used</em>, so they mean the same thing in both modes.</div>
+
+<div class="row">
+  <label></label>
+  <div class="field"><button id="refresh" type="button">Refresh now</button></div>
+</div>
+
+<div class="status" id="status"></div>
+
+<script>
+let ws = null;
+let uuid = null;
+let actionUUID = null;
+let settings = {};
+let ready = false;
+
+const el = (id) => document.getElementById(id);
+
+function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+  uuid = propertyInspectorUUID;
+  let parsed = {};
+  try { parsed = typeof actionInfo === 'string' ? JSON.parse(actionInfo) : (actionInfo || {}); } catch (e) {}
+  actionUUID = parsed.action || null;
+  settings = (parsed.payload && parsed.payload.settings) || {};
+
+  ws = new WebSocket('ws://127.0.0.1:' + port);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ event: registerEvent, uuid: propertyInspectorUUID }));
+    applySettings();
+    ready = true;
+    toPlugin({ event: 'getSources' });
+  };
+  ws.onmessage = (e) => {
+    let msg = {};
+    try { msg = JSON.parse(e.data); } catch (err) { return; }
+    if (msg.event === 'didReceiveSettings') {
+      settings = (msg.payload && msg.payload.settings) || {};
+      applySettings();
+    } else if (msg.event === 'sendToPropertyInspector') {
+      const p = msg.payload || {};
+      if (p.event === 'sources') {
+        // The plugin's copy is authoritative: it may have auto-assigned an
+        // account moments ago, after the panel captured its own snapshot.
+        if (p.settings && typeof p.settings === 'object') {
+          settings = p.settings;
+          applySettings();
+        }
+        populate(p.sources || []);
+      }
+    }
+  };
+}
+window.connectElgatoStreamDeckSocket = connectElgatoStreamDeckSocket;
+
+function send(event, payload) {
+  if (!ws || ws.readyState !== 1) return;
+  const msg = { event, context: uuid };
+  if (event === 'sendToPlugin') { msg.action = actionUUID; msg.payload = payload; }
+  else if (payload !== undefined) { msg.payload = payload; }
+  ws.send(JSON.stringify(msg));
+}
+
+function toPlugin(payload) { send('sendToPlugin', payload); }
+
+function save() {
+  if (!ready) return;
+  send('setSettings', settings);
+}
+
+function populate(sources) {
+  const sel = el('source');
+  sel.innerHTML = '';
+  if (!sources.length) {
+    sel.innerHTML = '<option value="">No accounts found</option>';
+    setStatus('No Claude or Codex accounts were found on this Mac.', true);
+    return;
+  }
+  const groups = { claude: [], codex: [] };
+  for (const s of sources) (groups[s.kind] || groups.claude).push(s);
+
+  for (const [kind, list] of Object.entries(groups)) {
+    if (!list.length) continue;
+    const og = document.createElement('optgroup');
+    og.label = kind === 'codex' ? 'Codex' : 'Claude Code';
+    for (const s of list) {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = s.email ? s.label + '  —  ' + s.email : s.label;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  // Do not pick an account here. An unset source means the plugin's back-fill has
+  // not finished; choosing the first option would give every dial the same
+  // account and overwrite the assignment that is about to arrive. A select always
+  // auto-selects its first option, so a placeholder is needed to represent "none"
+  // rather than relying on the value being empty.
+  const desired = settings.sourceId || '';
+  const known = sources.some((x) => x.id === desired);
+  if (!desired || !known) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = desired ? desired + '  (not on this Mac)' : 'Assigning…';
+    sel.insertBefore(placeholder, sel.firstChild);
+  }
+  sel.value = known ? desired : '';
+  const chosen = sources.find((s) => s.id === sel.value);
+  el('sourceHint').textContent = chosen && chosen.org
+    ? 'Organisation: ' + chosen.org
+    : 'Each dial can show a different account.';
+  setStatus('');
+}
+
+function applySettings() {
+  el('label').value = settings.customLabel || '';
+  const warn = settings.warnThreshold == null ? 60 : settings.warnThreshold;
+  const crit = settings.critThreshold == null ? 85 : settings.critThreshold;
+  el('warn').value = warn; el('warnRange').value = warn;
+  el('crit').value = crit; el('critRange').value = crit;
+  el('poll').value = settings.pollSeconds == null ? 180 : settings.pollSeconds;
+  el('mode').value = settings.showRemaining === false ? 'used' : 'remaining';
+  if (settings.sourceId) el('source').value = settings.sourceId;
+  // Correct an out-of-order pair on display rather than waiting for a slider.
+  if (Number(el('crit').value) < Number(el('warn').value)) syncThresholds('warn');
+}
+
+function setStatus(text, warn) {
+  const s = el('status');
+  s.textContent = text || '';
+  s.className = 'status' + (warn ? ' warn' : '');
+}
+
+/* thresholds must stay ordered: amber below red */
+function syncThresholds(changed) {
+  let warn = Number(el('warn').value);
+  let crit = Number(el('crit').value);
+  if (!Number.isFinite(warn)) warn = 60;
+  if (!Number.isFinite(crit)) crit = 85;
+  warn = Math.min(100, Math.max(1, warn));
+  crit = Math.min(100, Math.max(1, crit));
+  if (changed === 'warn' && warn > crit) crit = warn;
+  if (changed === 'crit' && crit < warn) warn = crit;
+  el('warn').value = warn; el('warnRange').value = warn;
+  el('crit').value = crit; el('critRange').value = crit;
+  settings.warnThreshold = warn;
+  settings.critThreshold = crit;
+  save();
+}
+
+el('source').addEventListener('change', (e) => {
+  settings.sourceId = e.target.value;
+  settings.viewIndex = 0;
+  save();
+  toPlugin({ event: 'getSources' });
+});
+el('mode').addEventListener('change', (e) => {
+  settings.showRemaining = e.target.value !== 'used';
+  save();
+});
+el('label').addEventListener('input', (e) => {
+  settings.customLabel = e.target.value.trim();
+  save();
+});
+for (const [num, range, key] of [['warn', 'warnRange', 'warn'], ['crit', 'critRange', 'crit']]) {
+  el(num).addEventListener('input', () => syncThresholds(key));
+  el(range).addEventListener('input', (e) => { el(num).value = e.target.value; syncThresholds(key); });
+}
+el('poll').addEventListener('change', (e) => {
+  let v = Number(e.target.value);
+  if (!Number.isFinite(v)) v = 180;
+  v = Math.min(3600, Math.max(60, Math.round(v)));
+  e.target.value = v;
+  settings.pollSeconds = v;
+  save();
+});
+el('refresh').addEventListener('click', () => {
+  toPlugin({ event: 'refresh' });
+  setStatus('Refresh requested.');
+  setTimeout(() => setStatus(''), 2500);
+});
+</script>
+</body>
+</html>

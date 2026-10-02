@@ -1,0 +1,11 @@
+{
+  "id": "quota",
+  "items": [
+    {
+      "key": "full-canvas",
+      "type": "pixmap",
+      "rect": [0, 0, 200, 100],
+      "zOrder": 0
+    }
+  ]
+}

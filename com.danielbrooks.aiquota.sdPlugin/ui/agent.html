@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent settings</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 12px 14px 18px;
+    font: 13px/1.45 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: #2d2d2d; color: #d8d8d8;
+  }
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 11px; }
+  .row > label { flex: 0 0 96px; text-align: right; color: #969696; font-size: 12px; }
+  .row > .field { flex: 1 1 auto; min-width: 0; }
+  select, input[type="text"] {
+    width: 100%; box-sizing: border-box;
+    background: #3d3d3d; color: #e8e8e8;
+    border: 1px solid #4a4a4a; border-radius: 4px;
+    padding: 5px 7px; font: inherit; font-size: 12px;
+  }
+  select:focus, input:focus { outline: none; border-color: #0d8bff; }
+  .hint { color: #7e7e7e; font-size: 11px; margin: -5px 0 12px 106px; }
+  button {
+    background: #3d3d3d; color: #e8e8e8; border: 1px solid #4a4a4a;
+    border-radius: 4px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  button:hover { background: #484848; }
+  button:active { background: #303030; }
+  .divider { height: 1px; background: #404040; margin: 14px 0 13px; }
+  .status { color: #7e7e7e; font-size: 11px; margin-top: 10px; }
+  .status.warn { color: #fbbf24; }
+  .legend { margin: 2px 0 0 106px; font-size: 11px; color: #7e7e7e; }
+  .legend span { margin-right: 12px; white-space: nowrap; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 4px; }
+  optgroup { color: #969696; }
+</style>
+</head>
+<body>
+
+<div class="row">
+  <label for="session">Follows</label>
+  <div class="field"><select id="session"><option value="">Loading…</option></select></div>
+</div>
+<div class="hint" id="sessionHint">Automatic keys share out the most recent sessions in key order.</div>
+
+<div class="row">
+  <label for="label">Label</label>
+  <div class="field"><input type="text" id="label" placeholder="auto" maxlength="40"></div>
+</div>
+<div class="hint">Leave blank to use the session's own title.</div>
+
+<div class="divider"></div>
+
+<div class="legend">
+  <span><i class="dot" style="background:#f87171"></i>blocked</span>
+  <span><i class="dot" style="background:#4ade80"></i>working</span>
+  <span><i class="dot" style="background:#fbbf24"></i>your move</span>
+  <span><i class="dot" style="background:#9ca3af"></i>idle</span>
+</div>
+<div class="hint" style="margin-top:8px"><strong>Press</strong> to jump to that agent in Ghostty.
+<strong>Press and hold</strong> to switch between the session and where it is running.</div>
+<div class="hint">A key can only jump while herdr is running that session in a pane. The left
+edge of the key is lit when it can.</div>
+
+<div class="row">
+  <label></label>
+  <div class="field"><button id="refresh" type="button">Rescan now</button></div>
+</div>
+
+<div class="status" id="status"></div>
+
+<script>
+let ws = null;
+let uuid = null;
+let actionUUID = null;
+let settings = {};
+let ready = false;
+
+const el = (id) => document.getElementById(id);
+
+function connectElgatoStreamDeckSocket(port, propertyInspectorUUID, registerEvent, info, actionInfo) {
+  uuid = propertyInspectorUUID;
+  let parsed = {};
+  try { parsed = typeof actionInfo === 'string' ? JSON.parse(actionInfo) : (actionInfo || {}); } catch (e) {}
+  actionUUID = parsed.action || null;
+  settings = (parsed.payload && parsed.payload.settings) || {};
+
+  ws = new WebSocket('ws://127.0.0.1:' + port);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ event: registerEvent, uuid: propertyInspectorUUID }));
+    applySettings();
+    ready = true;
+    toPlugin({ event: 'getSessions' });
+  };
+  ws.onmessage = (e) => {
+    let msg = {};
+    try { msg = JSON.parse(e.data); } catch (err) { return; }
+    if (msg.event === 'didReceiveSettings') {
+      settings = (msg.payload && msg.payload.settings) || {};
+      applySettings();
+    } else if (msg.event === 'sendToPropertyInspector') {
+      const p = msg.payload || {};
+      if (p.event === 'sessions') {
+        if (p.settings && typeof p.settings === 'object') {
+          settings = p.settings;
+          applySettings();
+        }
+        populate(p.sessions || []);
+      }
+    }
+  };
+}
+window.connectElgatoStreamDeckSocket = connectElgatoStreamDeckSocket;
+
+function send(event, payload) {
+  if (!ws || ws.readyState !== 1) return;
+  const msg = { event, context: uuid };
+  if (event === 'sendToPlugin') { msg.action = actionUUID; msg.payload = payload; }
+  else if (payload !== undefined) { msg.payload = payload; }
+  ws.send(JSON.stringify(msg));
+}
+
+function toPlugin(payload) { send('sendToPlugin', payload); }
+
+function save() {
+  if (!ready) return;
+  send('setSettings', settings);
+}
+
+function age(ms) {
+  if (ms == null) return '';
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return secs + 's';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm';
+  const h = Math.floor(mins / 60);
+  if (h < 24) return h + 'h';
+  return Math.floor(h / 24) + 'd';
+}
+
+const MARK = { working: '● ', waiting: '▲ ', blocked: '■ ', idle: '', dormant: '' };
+
+function populate(list) {
+  const sel = el('session');
+  sel.innerHTML = '';
+
+  const auto = document.createElement('option');
+  auto.value = '';
+  auto.textContent = 'Automatic — this key’s slot in the recent list';
+  sel.appendChild(auto);
+
+  const summary = document.createElement('option');
+  summary.value = '@summary';
+  summary.textContent = 'Summary — counts across all agents';
+  sel.appendChild(summary);
+
+  if (list.length) {
+    const og = document.createElement('optgroup');
+    og.label = 'Pin to one session';
+    for (const s of list) {
+      const o = document.createElement('option');
+      o.value = s.id;
+      const where = s.branch ? '  ·  ' + s.branch : '';
+      // A pane id means this key can jump to a terminal; without one it only shows status.
+      const link = s.pane ? ', ' + s.pane : '';
+      o.textContent = (MARK[s.state] || '') + s.label + where + '  (' + s.account + ', ' + age(s.ageMs) + link + ')';
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+
+  // A pinned project whose transcripts have since been cleaned up would otherwise
+  // silently fall back to Automatic, which looks like the setting was ignored.
+  const desired = settings.mode === 'summary' ? '@summary' : (settings.sessionId || '');
+  if (desired && desired !== '@summary' && !list.some((x) => x.id === desired)) {
+    const missing = document.createElement('option');
+    missing.value = desired;
+    missing.textContent = desired + '  (no transcript found)';
+    sel.insertBefore(missing, sel.firstChild);
+  }
+  sel.value = desired;
+
+  const counts = list.reduce((a, s) => { a[s.state] = (a[s.state] || 0) + 1; return a; }, {});
+  const live = (counts.working || 0) + (counts.waiting || 0) + (counts.blocked || 0);
+  const linked = list.filter((s) => s.pane).length;
+  setStatus(list.length
+    ? list.length + ' session(s), ' + live + ' active, ' + linked + ' linked to a terminal.'
+    : 'No Claude Code sessions found on this Mac.', !list.length);
+  updateHint();
+}
+
+function updateHint() {
+  const v = el('session').value;
+  el('sessionHint').textContent = v === '@summary'
+    ? 'Counts across all agents. Pressing it jumps to whichever one is most stuck.'
+    : v
+      ? 'This key stays on that project, even when a new session starts in it.'
+      : 'Automatic keys share out the most recent sessions in key order.';
+}
+
+function applySettings() {
+  el('label').value = settings.customLabel || '';
+  const sel = el('session');
+  const desired = settings.mode === 'summary' ? '@summary' : (settings.sessionId || '');
+  if ([...sel.options].some((o) => o.value === desired)) sel.value = desired;
+  updateHint();
+}
+
+function setStatus(text, warn) {
+  const s = el('status');
+  s.textContent = text || '';
+  s.className = 'status' + (warn ? ' warn' : '');
+}
+
+el('session').addEventListener('change', (e) => {
+  const v = e.target.value;
+  settings.mode = v === '@summary' ? 'summary' : 'session';
+  settings.sessionId = (v && v !== '@summary') ? v : null;
+  settings.viewIndex = 0;
+  save();
+  updateHint();
+});
+el('label').addEventListener('input', (e) => {
+  settings.customLabel = e.target.value.trim();
+  save();
+});
+el('refresh').addEventListener('click', () => {
+  toPlugin({ event: 'refresh' });
+  toPlugin({ event: 'getSessions' });
+  setStatus('Rescanning…');
+});
+</script>
+</body>
+</html>

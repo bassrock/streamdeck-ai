@@ -1,0 +1,73 @@
+{
+  "Name": "AI Quota",
+  "Version": "1.1.0.0",
+  "Author": "Daniel Brooks",
+  "UUID": "com.danielbrooks.aiquota",
+  "Description": "Live Claude Code and OpenAI Codex quota, and live Claude session status, on the Stream Deck.",
+  "Icon": "imgs/pluginIcon",
+  "Category": "AI Quota",
+  "CategoryIcon": "imgs/categoryIcon",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 2,
+  "Nodejs": {
+    "Version": "20"
+  },
+  "Software": {
+    "MinimumVersion": "6.4"
+  },
+  "OS": [
+    {
+      "Platform": "mac",
+      "MinimumVersion": "13"
+    }
+  ],
+  "Actions": [
+    {
+      "Name": "Quota",
+      "UUID": "com.danielbrooks.aiquota.quota",
+      "Icon": "imgs/actionIcon",
+      "Tooltip": "Shows the 5-hour and 7-day usage windows for a Claude or Codex account.",
+      "PropertyInspectorPath": "ui/quota.html",
+      "Controllers": [
+        "Encoder",
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/keyDefault",
+          "TitleAlignment": "middle",
+          "ShowTitle": false
+        }
+      ],
+      "Encoder": {
+        "layout": "layouts/quota.json",
+        "StackColor": "#d97757",
+        "TriggerDescription": {
+          "Rotate": "Cycle view",
+          "Push": "Cycle view",
+          "Touch": "Cycle view",
+          "LongTouch": "Refresh now"
+        }
+      }
+    },
+    {
+      "Name": "Agent",
+      "UUID": "com.danielbrooks.aiquota.agent",
+      "Icon": "imgs/actionIcon",
+      "Tooltip": "Shows what one Claude Code session is doing right now.",
+      "PropertyInspectorPath": "ui/agent.html",
+      "Controllers": [
+        "Keypad"
+      ],
+      "SupportedInMultiActions": false,
+      "States": [
+        {
+          "Image": "imgs/keyDefault",
+          "TitleAlignment": "middle",
+          "ShowTitle": false
+        }
+      ]
+    }
+  ]
+}

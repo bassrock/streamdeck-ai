@@ -1,0 +1,10 @@
+{
+  "name": "com.danielbrooks.aiquota",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Runtime dependencies bundled inside the Stream Deck plugin.",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
