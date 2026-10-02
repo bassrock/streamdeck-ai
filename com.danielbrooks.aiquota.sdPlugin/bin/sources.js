@@ -431,15 +431,17 @@ async function fetchOne(account) {
 /* ------------------------------------------------------------ shared cache */
 
 /**
- * Claude Usage (the menu bar app) reads the same accounts. Both keep one file per
- * account here and check it before calling: a response younger than
- * SHARED_FRESH_MS is used as is, another reader's in-flight attempt or a 429
+ * Claude Usage (the menu bar app) reads the same accounts and is the primary
+ * poller. Both keep one file per account here and check it before calling. This
+ * plugin follows: a response younger than SHARED_FRESH_MS (two of the app's
+ * ~3 minute polls, plus jitter) is used as is, so while the app runs the plugin
+ * never calls the endpoints itself and only takes over when the app is closed. another reader's in-flight attempt or a 429
  * cooldown is waited out, and only then is the endpoint called. Same format as
  * Sources/ClaudeUsage/SharedUsage.swift in claude-usage; times are ms epoch.
  * Holds raw usage responses only, never a token. Files are 0600 in a 0700 dir.
  */
 const SHARED_DIR = process.env.AI_USAGE_SHARED_DIR || path.join(HOME, 'Library', 'Caches', 'ai-usage-shared');
-const SHARED_FRESH_MS = 120 * 1000;
+const SHARED_FRESH_MS = 390 * 1000;
 const SHARED_ATTEMPT_HOLD_MS = 30 * 1000;
 
 function sharedFile(account) {

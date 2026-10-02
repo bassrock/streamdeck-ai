@@ -19,7 +19,7 @@ const check = (ok, name) => { console.log(`  ${ok ? 'OK  ' : 'FAIL'} ${name}`); 
   const now = 1_800_000_000_000;
   check(decideShared(null, now) === 'fetch', 'no entry: fetch');
   check(decideShared({ body: {}, fetchedAt: now - 60e3 }, now) === 'use', 'fresh body: use');
-  check(decideShared({ body: {}, fetchedAt: now - 200e3 }, now) === 'fetch', 'old body: fetch');
+  check(decideShared({ body: {}, fetchedAt: now - 400e3 }, now) === 'fetch', 'body older than two app polls: fetch');
   check(decideShared({ fetchedAt: now - 600e3, cooldownUntil: now + 60e3 }, now) === 'cooldown', 'cooldown: wait');
   check(decideShared({ fetchedAt: now - 600e3, attemptAt: now - 5e3 }, now) === 'hold', 'in-flight attempt: hold');
   check(decideShared({ fetchedAt: now - 600e3, attemptAt: now - 60e3 }, now) === 'fetch', 'abandoned attempt: fetch');

@@ -286,11 +286,14 @@ eight hex characters of the SHA-256 of the directory path.
 id from `~/.codex/auth.json`.
 
 **Shared with Claude Usage.** The [Claude Usage](https://github.com/breakawaydata/claude-usage)
-menu bar app polls the same accounts. Without coordination, the two would double the
-requests and set off the endpoints' rate limits. So both keep one file per account in
-`~/Library/Caches/ai-usage-shared/` (`claude-.claude-work.json`, `codex-.codex.json`, …):
+menu bar app polls the same accounts and is the primary poller. Without coordination, the
+two would double the requests and set off the endpoints' rate limits. So both keep one file
+per account in `~/Library/Caches/ai-usage-shared/` (`claude-.claude-work.json`,
+`codex-.codex.json`, …):
 
-- **Fresh reading:** if a response there is under 2 minutes old, it's used as is, with no request.
+- **Fresh reading:** this plugin uses a response there while it's under 6½ minutes old (two of
+  the app's 3-minute polls). So while Claude Usage is running, the plugin makes no usage
+  requests of its own. It only polls when the app is closed.
 - **Cooldown:** a 429 sets a cooldown that both apps honour (5 min, doubling to 30).
 - **In flight:** an attempt that's still running holds the other app off for up to 30 seconds.
 
